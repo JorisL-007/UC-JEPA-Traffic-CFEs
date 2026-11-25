@@ -1,6 +1,6 @@
 # only run once to asemble historycal weather data
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pandas as pd
 from meteostat import hourly
@@ -14,7 +14,7 @@ TZ = "America/Los_Angeles"
 
 FIELDS = {"temp": "temperature", "rhum": "humidity", "prcp": "precipitation", "wspd": "wind_speed"}
 
-raw = hourly(STATION_ID, START, END).fetch()
+raw = hourly(STATION_ID, START, END + timedelta(days=1)).fetch()
 print(f"Raw rows returned for station {STATION_ID}: {0 if raw is None else len(raw)}")
 if raw is None or raw.empty:
     raise RuntimeError(
