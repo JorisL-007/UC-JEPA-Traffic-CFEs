@@ -8,6 +8,19 @@ import torch
 import h5py
 from torch.utils.data import Dataset
 
+# Use context data from same year as METR-LA measurements (closest available OSM data is from ~2-6 months later)
+ox.settings.overpass_settings = (
+    '[out:json][timeout:{timeout}]{maxsize}'
+    '[date:"2012-09-13T00:00:00Z"]'
+)
+ox.settings.overpass_url = "https://overpass.private.coffee/api"
+ox.settings.overpass_rate_limit = False
+ox.settings.max_query_area_size = 25_000_000  # split into areas ≤25 km²
+ox.settings.requests_timeout = 600           # allow 10 minutes per request
+ox.settings.log_console = True               # display download progress
+ox.settings.use_cache = True
+ox.settings.cache_folder = "cache"
+
 SNAP_RADIUS_M = 100
 POI_BUFFER_M = 100
 IN_STEPS, OUT_STEPS = 12, 12
@@ -192,3 +205,17 @@ if __name__ == "__main__":
     sample = dataset[0]
     print(len(dataset), "samples")
     print({k: tuple(v.shape) for k, v in sample.items()})
+
+    np.savez_compressed(
+        "data/metr_la_context.npz",
+        speeds_kmh=speeds_kmh,
+        dynamic=dynamic,
+        static=static,
+        sensor_ids=np.asarray(keep, dtype=str),
+        timestamps=speeds_mph.index.to_numpy(),
+        static_feature_names=static_df.columns.to_numpy(dtype=str),
+        lanes_imputed=imputed.loc[keep, "lanes_imputed"].to_numpy(),
+        speed_imputed=imputed.loc[keep, "speed_imputed"].to_numpy(),
+        osm_settings=ox.settings.overpass_settings,
+    )
+    print("Saved data/metr_la_context.npz")
