@@ -20,3 +20,13 @@ Both builds use 2012 METR-LA speeds and weather. The static OSM context comes fr
 ## Upstream reproduction code
 
 `T-GCN-PyTorch/` contains the forecasting and NSGA-II code from Wang et al. (2025), *Counterfactual explanations for deep learning-based traffic forecasting*. The import comes from commit `9618e0fbb1318043b8939515656edf62daa95dda` and includes the original MIT license. [Paper](https://doi.org/10.1016/j.commtr.2025.100176) · [Pinned source](https://github.com/RushanWang1/CFforTrafficForecast/tree/9618e0fbb1318043b8939515656edf62daa95dda/T-GCN-PyTorch) · [License](T-GCN-PyTorch/LICENSE)
+
+## Run the forecaster
+
+With the project requirements installed, run a one-batch CPU check from the repository root.
+
+```sh
+python T-GCN-PyTorch/main.py --accelerator cpu --limit_train_batches 1 --limit_val_batches 1 --output /tmp/tgcn-smoke
+```
+
+The command defaults to `data/metr_la_context.npz`. Pass `--data data/metr_la_context_2026.npz` for the other snapshot. The loader uses chronological 70/10/20 splits and the sensor IDs in `data/metr_la_adjacency.npz` to align the graph.

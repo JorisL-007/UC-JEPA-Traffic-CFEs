@@ -59,7 +59,7 @@ class MultiheadAttention(nn.Module):
             return o
 
 class TGCNGraphConvolution(nn.Module):
-    def __init__(self, adj, num_gru_units: int, output_dim: int, bias: float = 0.0):
+    def __init__(self, adj, num_gru_units: int, output_dim: int, bias: float = 0.0, num_features: int = 17):
         super(TGCNGraphConvolution, self).__init__()
         self._num_gru_units = num_gru_units
         self._output_dim = output_dim
@@ -67,10 +67,9 @@ class TGCNGraphConvolution(nn.Module):
         self.register_buffer(
             "laplacian", calculate_laplacian_with_self_loop(torch.FloatTensor(adj))
         )
-        # IMPORTANT: HERE 4 IS THE NUMBER OF FEATURE change
         self.weights = nn.Parameter(
-            torch.FloatTensor(self._num_gru_units + 17, self._output_dim)
-        ) 
+            torch.FloatTensor(self._num_gru_units + num_features, self._output_dim)
+        )
         self.biases = nn.Parameter(torch.FloatTensor(self._output_dim))
         self.reset_parameters()
 
@@ -125,25 +124,25 @@ class TGCNGraphConvolution(nn.Module):
 
 
 class TGCNCell(nn.Module):
-    def __init__(self, adj, input_dim: int, hidden_dim: int):
+    def __init__(self, adj, input_dim: int, hidden_dim: int, num_features: int = 17):
         super(TGCNCell, self).__init__()
         self._input_dim = input_dim
         self._hidden_dim = hidden_dim
         self.register_buffer("adj", torch.FloatTensor(adj))
         self.graph_conv1 = TGCNGraphConvolution(
-            self.adj, self._hidden_dim, self._hidden_dim * 2, bias=1.0
+            self.adj, self._hidden_dim, self._hidden_dim * 2, bias=1.0, num_features=num_features
         )
         self.graph_conv2 = TGCNGraphConvolution(
-            self.adj, self._hidden_dim, self._hidden_dim
+            self.adj, self._hidden_dim, self._hidden_dim, num_features=num_features
         )
 
     def forward(self, inputs, hidden_state):
         # [r, u] = sigmoid(A[x, h]W + b)
-        # [r, u] (batch_size, num_nodes * (2 * num_gru_units))
-        concatenation = torch.sigmoid(self.graph_conv1(inputs, hidden_state))
-        # r (batch_size, num_nodes, num_gru_units)
-        # u (batch_size, num_nodes, num_gru_units)
-        r, u = torch.chunk(concatenation, chunks=2, dim=1)
+        gates = torch.sigmoid(self.graph_conv1(inputs, hidden_state))
+        gates = gates.reshape(inputs.size(0), inputs.size(1), 2 * self._hidden_dim)
+        r, u = gates.chunk(2, dim=-1)
+        r = r.flatten(1)
+        u = u.flatten(1)
         # c = tanh(A[x, (r * h)W + b])
         # c (batch_size, num_nodes * num_gru_units)
         c = torch.tanh(self.graph_conv2(inputs, r * hidden_state))
@@ -158,14 +157,14 @@ class TGCNCell(nn.Module):
 
 
 class TGCN(nn.Module):
-    def __init__(self, adj, hidden_dim: int, **kwargs):
+    def __init__(self, adj, hidden_dim: int, num_features: int = 17, pre_len: int = 12, **kwargs):
         super(TGCN, self).__init__()
         self._input_dim = adj.shape[0]
         self._hidden_dim = hidden_dim
         self.register_buffer("adj", torch.FloatTensor(adj))
-        self.tgcn_cell = TGCNCell(self.adj, self._input_dim, self._hidden_dim)
+        self.tgcn_cell = TGCNCell(self.adj, self._input_dim, self._hidden_dim, num_features)
         # self.self_attn = MultiheadAttention(input_dim, input_dim, num_heads)
-        self.linear = nn.Linear(64,12)
+        self.linear = nn.Linear(hidden_dim, pre_len)
         
 
     def forward(self, inputs):
