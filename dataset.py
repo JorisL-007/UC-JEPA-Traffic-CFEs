@@ -1,3 +1,4 @@
+import argparse
 import re
 
 import geopandas as gpd
@@ -7,19 +8,6 @@ import pandas as pd
 import torch
 import h5py
 from torch.utils.data import Dataset
-
-# Use context data from same year as METR-LA measurements (closest available OSM data is from ~2-6 months later)
-ox.settings.overpass_settings = (
-    '[out:json][timeout:{timeout}]{maxsize}'
-    '[date:"2012-09-13T00:00:00Z"]'
-)
-ox.settings.overpass_url = "https://overpass.private.coffee/api"
-ox.settings.overpass_rate_limit = False
-ox.settings.max_query_area_size = 25_000_000  # split into areas ≤25 km²
-ox.settings.requests_timeout = 600           # allow 10 minutes per request
-ox.settings.log_console = True               # display download progress
-ox.settings.use_cache = True
-ox.settings.cache_folder = "cache"
 
 SNAP_RADIUS_M = 100
 POI_BUFFER_M = 100
@@ -44,7 +32,8 @@ POI_NAMES = ["gas_station", "charging_station", "parking", "restaurant"]
 
 
 def first(v):
-    return v[0] if isinstance(v, list) else v
+    # OSMnx can return merged tags in any order.
+    return min(v, key=str) if isinstance(v, list) else v
 
 
 def parse_lanes(v):
@@ -96,7 +85,7 @@ def build_static_features(locs):
     # Road segments with attributes
     G = ox.graph_from_bbox(bbox=bbox, network_type="drive")
     edges = ox.graph_to_gdfs(G, nodes=False)[["highway", "lanes", "maxspeed", "geometry"]]
-    edges = edges.reset_index(drop=True).to_crs(UTM_CRS)
+    edges = edges.sort_index().reset_index(drop=True).to_crs(UTM_CRS)
 
     # Snap sensors to the nearest road within SNAP_RADIUS_M
     sensors = gpd.GeoDataFrame(
@@ -105,7 +94,8 @@ def build_static_features(locs):
     snapped = gpd.sjoin_nearest(
         sensors, edges, how="left", max_distance=SNAP_RADIUS_M
     )
-    snapped = snapped.dropna(subset=["index_right"]).drop_duplicates("sensor_id")
+    snapped = snapped.dropna(subset=["index_right"]).sort_values("index_right")
+    snapped = snapped.drop_duplicates("sensor_id")
     snapped = snapped.set_index("sensor_id")
 
     # Road features with class-based imputation
@@ -179,6 +169,26 @@ class METRLAContextDataset(Dataset):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--snapshot", choices=["2012", "2026"], default="2012")
+    parser.add_argument("--output", help="Output .npz path")
+    args = parser.parse_args()
+
+    ox.settings.log_console = True
+    ox.settings.use_cache = True
+    ox.settings.cache_folder = "cache"
+    if args.snapshot == "2012":
+        # The cached historical query uses the September 2012 OSM snapshot.
+        ox.settings.overpass_settings += '[date:"2012-09-13T00:00:00Z"]'
+        ox.settings.overpass_url = "https://overpass.private.coffee/api"
+        ox.settings.overpass_rate_limit = False
+        ox.settings.max_query_area_size = 25_000_000
+        ox.settings.requests_timeout = 600
+        output = args.output or "data/metr_la_context.npz"
+    else:
+        # The cached 2026 queries use the default OSMnx settings.
+        output = args.output or "data/metr_la_context_2026.npz"
+
     # Inputs
     speeds_mph = read_metr_la_h5("data/METR-LA.h5")
     speeds_mph.columns = speeds_mph.columns.astype(str)
@@ -207,7 +217,7 @@ if __name__ == "__main__":
     print({k: tuple(v.shape) for k, v in sample.items()})
 
     np.savez_compressed(
-        "data/metr_la_context.npz",
+        output,
         speeds_kmh=speeds_kmh,
         dynamic=dynamic,
         static=static,
@@ -218,4 +228,4 @@ if __name__ == "__main__":
         speed_imputed=imputed.loc[keep, "speed_imputed"].to_numpy(),
         osm_settings=ox.settings.overpass_settings,
     )
-    print("Saved data/metr_la_context.npz")
+    print(f"Saved {output}")
